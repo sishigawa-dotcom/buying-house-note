@@ -4,10 +4,11 @@ import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents, Circle
 import L from 'leaflet';
 import { Property, MapPath, MapBoardMode, PencilColor, MediaNote, LifePin, YarnConnection } from '../types';
 import { COLORS, MAP_DEFAULT_CENTER, MAP_ZOOM } from '../constants';
-import { MapPin, Plus, PenTool, Eraser, MousePointer2, X, Trash2, Undo, Palette, Image as ImageIcon, Mic, Video, StopCircle, UserPlus, Pin, Check, Spline, Locate, Loader2, AlertCircle, ChevronRight, ChevronLeft } from 'lucide-react';
+import { MapPin, Plus, PenTool, Eraser, MousePointer2, X, Trash2, Undo, Palette, Image as ImageIcon, Mic, Video, StopCircle, UserPlus, Pin, Check, Spline, Locate, Loader2, AlertCircle, ChevronRight, ChevronLeft, Bell } from 'lucide-react';
 import { MediaNoteLayer } from './MediaNoteLayer';
 import { useMediaRecorder } from '../hooks/useMediaRecorder';
 import { VideoRecorderModal } from './VideoRecorderModal';
+import { VideoPlayerModal } from './VideoPlayerModal'; // NEW
 import { LifePinMarker } from './LifePinMarker';
 import { YarnOverlay } from './YarnOverlay';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -27,6 +28,20 @@ const PENCIL_COLORS: { hex: PencilColor; label: string }[] = [
   { hex: '#F5A623', label: '关注/一般' }, // Yellow
   { hex: '#E65555', label: '噪音/风险' }, // Red
 ];
+
+// --- Map Resizer Component ---
+const MapInvalidator = () => {
+  const map = useMap();
+  useEffect(() => {
+    const timeouts = [0, 300, 600, 1000].map(delay => 
+      setTimeout(() => {
+        map.invalidateSize();
+      }, delay)
+    );
+    return () => timeouts.forEach(t => clearTimeout(t));
+  }, [map]);
+  return null;
+};
 
 // Helper to create the basic pin element (for new pin preview only)
 const createNewPinIcon = () => {
@@ -48,7 +63,7 @@ interface MapBoardProps {
   selectedId: string | null;
 }
 
-// --- SUB-COMPONENT: Pin Name Modal (Replaces window.prompt) ---
+// --- SUB-COMPONENT: Pin Name Modal ---
 const PinNameModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -60,7 +75,6 @@ const PinNameModal: React.FC<{
   useEffect(() => {
     if (isOpen) {
       setName('');
-      // Delay focus slightly to ensure render
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [isOpen]);
@@ -74,13 +88,7 @@ const PinNameModal: React.FC<{
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" 
-        onClick={onClose}
-      />
-      
-      {/* Modal Card */}
+      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" onClick={onClose} />
       <div className="relative bg-[#F7F5F0] w-full max-w-xs md:max-w-sm rounded-2xl shadow-2xl p-6 transform transition-all scale-100 animate-in fade-in zoom-in-95 duration-200 border border-[#E5E0D8]">
         <div className="text-center mb-6">
           <div className="w-12 h-12 bg-[#C0392B]/10 rounded-full flex items-center justify-center mx-auto mb-3 text-[#C0392B]">
@@ -89,7 +97,6 @@ const PinNameModal: React.FC<{
           <h3 className="text-lg font-bold text-[#2A2A2A] font-serif-cn">标记地点</h3>
           <p className="text-xs text-[#97764E] mt-1 font-sans-cn">为这个位置添加一个便于记忆的名称</p>
         </div>
-
         <input
           ref={inputRef}
           type="text"
@@ -99,21 +106,9 @@ const PinNameModal: React.FC<{
           placeholder="例如：公司、父母家、地铁口..."
           className="w-full bg-white border border-[#E5E0D8] rounded-xl px-4 py-3 text-[#2A2A2A] placeholder-gray-400 focus:outline-none focus:border-[#C0392B] focus:ring-1 focus:ring-[#C0392B] transition-all font-sans-cn mb-6 text-center"
         />
-
         <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl border border-[#E5E0D8] text-[#5C554B] font-bold text-sm hover:bg-gray-50 transition-colors font-sans-cn"
-          >
-            取消
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!name.trim()}
-            className="px-4 py-2.5 rounded-xl bg-[#C0392B] text-white font-bold text-sm hover:bg-[#A93226] transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed font-sans-cn"
-          >
-            确定添加
-          </button>
+          <button onClick={onClose} className="px-4 py-2.5 rounded-xl border border-[#E5E0D8] text-[#5C554B] font-bold text-sm hover:bg-gray-50 transition-colors font-sans-cn">取消</button>
+          <button onClick={handleSubmit} disabled={!name.trim()} className="px-4 py-2.5 rounded-xl bg-[#C0392B] text-white font-bold text-sm hover:bg-[#A93226] transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed font-sans-cn">确定添加</button>
         </div>
       </div>
     </div>
@@ -122,25 +117,24 @@ const PinNameModal: React.FC<{
 
 
 // --- Interactive Property Marker Component ---
-// Memoized to prevent re-renders breaking dragging
 const PropertyMarker = React.memo(({
   property,
   isSelected,
   onSelect,
   onUpdate,
-  onRequestDelete, // CHANGED: Replaced direct onDelete with request
-  onDrag,     // NEW: Real-time drag callback
-  onDragEnd,  // NEW: Drag end callback
+  onRequestDelete,
+  onDrag,
+  onDragEnd,
   hasYarn,
-  isConnectMode, // Add mode prop to conditional styling
-  isConnectStart // Is this the start node?
+  isConnectMode,
+  isConnectStart
 }: {
   property: Property;
   isSelected: boolean;
   onSelect: (id: string) => void;
   onUpdate: (prop: Property) => void;
   onRequestDelete: (id: string) => void;
-  onDrag: (id: string, lat: number, lng: number) => void; // Update signature
+  onDrag: (id: string, lat: number, lng: number) => void;
   onDragEnd: () => void;
   hasYarn: boolean;
   isConnectMode: boolean;
@@ -149,15 +143,22 @@ const PropertyMarker = React.memo(({
   const markerRef = useRef<L.Marker>(null);
   const containerRef = useRef<HTMLDivElement>(document.createElement('div'));
   const rootRef = useRef<any>(null);
-  const isDraggingRef = useRef(false); // Track dragging state
+  const isDraggingRef = useRef(false);
   
-  // Use ref to access latest props in event handlers without re-binding
+  const [isDeleteMode, setIsDeleteMode] = useState(false);
+  const longPressTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isSelected || isConnectMode) {
+      setIsDeleteMode(false);
+    }
+  }, [isSelected, isConnectMode]);
+  
   const propsRef = useRef({ property, onSelect, onUpdate, onDrag, onDragEnd });
   useEffect(() => {
      propsRef.current = { property, onSelect, onUpdate, onDrag, onDragEnd };
   }, [property, onSelect, onUpdate, onDrag, onDragEnd]);
 
-  // Stable Icon: Only created once. React Portal handles content updates.
   const icon = useMemo(() => L.divIcon({
     className: 'property-marker-wrapper',
     html: containerRef.current,
@@ -171,26 +172,20 @@ const PropertyMarker = React.memo(({
     }
 
     const handleMarkerClick = (e: React.MouseEvent) => {
-       // Check if drag just happened
        if (isDraggingRef.current) return;
-
-       // Stop native propagation to prevent map click
        e.nativeEvent.stopPropagation();
        e.stopPropagation();
        onSelect(property.id);
     };
 
-    // --- Robust Delete Handler ---
     const handleDeleteClick = (e: React.MouseEvent | React.PointerEvent) => {
        e.stopPropagation();
        e.preventDefault();
-       
        if (e.nativeEvent) {
          e.nativeEvent.stopImmediatePropagation();
          e.nativeEvent.stopPropagation();
        }
-
-       // CHANGED: No more window.confirm here. Just request delete from parent.
+       setIsDeleteMode(false);
        onRequestDelete(property.id);
     };
 
@@ -202,12 +197,37 @@ const PropertyMarker = React.memo(({
        }
     };
 
+    const handlePointerDown = (e: React.PointerEvent) => {
+      if (isDeleteMode || isConnectMode) return;
+      longPressTimerRef.current = setTimeout(() => {
+        setIsDeleteMode(true);
+        if (navigator.vibrate) navigator.vibrate(50);
+      }, 600);
+    };
+
+    const handlePointerUp = () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+
+    const handlePointerMove = () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+
     rootRef.current.render(
       <div 
-        className={`group relative flex flex-col items-center justify-end w-full h-full pointer-events-auto ${isConnectMode ? 'cursor-crosshair' : ''}`}
+        className={`group relative flex flex-col items-center justify-end w-full h-full pointer-events-auto select-none ${isConnectMode ? 'cursor-crosshair' : ''}`}
         onClick={handleMarkerClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        onPointerMove={handlePointerMove}
       >
-        {/* Only show delete button if NOT in connect mode */}
         {!isConnectMode && (
           <button
             type="button"
@@ -216,19 +236,21 @@ const PropertyMarker = React.memo(({
             onMouseDown={killEvent}
             onDoubleClick={killEvent}
             className={`
-              absolute -top-2 -left-2 z-[9999]
-              w-5 h-5 rounded-full bg-[#E65555] text-white flex items-center justify-center border border-white
+              absolute -top-3 -left-3 z-[9999]
+              w-6 h-6 rounded-full bg-[#E65555] text-white flex items-center justify-center border-2 border-white
               shadow-md transform transition-all duration-200 cursor-pointer
-              ${isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100'}
+              ${isDeleteMode 
+                 ? 'opacity-100 scale-100 pointer-events-auto animate-bounce' 
+                 : 'opacity-0 scale-50 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto'
+              }
               hover:bg-red-600 hover:scale-110 active:scale-95
             `}
             title="删除房源"
           >
-            <X size={12} strokeWidth={3} className="pointer-events-none" />
+            <X size={14} strokeWidth={3} className="pointer-events-none" />
           </button>
         )}
 
-        {/* Connect Mode Highlight Ring */}
         {isConnectMode && (
           <div className={`absolute inset-0 rounded-full animate-ping ${isConnectStart ? 'bg-[#C0392B]/30' : 'bg-[#97BC62]/20'}`} />
         )}
@@ -245,7 +267,6 @@ const PropertyMarker = React.memo(({
         >
         </div>
         
-        {/* Visual Cue for Connect Mode */}
         {isConnectMode && (
           <div className="absolute -bottom-6 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded backdrop-blur-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
              {isConnectStart ? '起点' : '连接'}
@@ -253,37 +274,38 @@ const PropertyMarker = React.memo(({
         )}
       </div>
     );
-  }, [property, isSelected, onSelect, onRequestDelete, hasYarn, isConnectMode, isConnectStart]);
+  }, [property, isSelected, onSelect, onRequestDelete, hasYarn, isConnectMode, isConnectStart, isDeleteMode]);
 
   useEffect(() => {
     return () => {
       if (rootRef.current) {
         setTimeout(() => rootRef.current.unmount(), 0);
       }
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     };
   }, []);
 
-  // Stable event handlers using refs to avoid re-binding
   const eventHandlers = useMemo(() => ({
     dragstart: () => {
       isDraggingRef.current = true;
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
     },
     drag: (e: any) => {
-       // Real-time drag update
        const { lat, lng } = e.target.getLatLng();
        propsRef.current.onDrag(propsRef.current.property.id, lat, lng);
     },
     dragend: () => {
-      if (isConnectMode) return; // Disable drag in connect mode
+      if (isConnectMode) return;
       const marker = markerRef.current;
       if (marker) {
         const { lat, lng } = marker.getLatLng();
-        // Use latest from ref
         const { property, onUpdate, onDragEnd } = propsRef.current;
         onUpdate({ ...property, location: { lat, lng } });
         onDragEnd();
       }
-      // Reset drag state after a small delay to ensure click events are skipped
       setTimeout(() => {
         isDraggingRef.current = false;
       }, 50);
@@ -294,15 +316,15 @@ const PropertyMarker = React.memo(({
        const { property, onSelect } = propsRef.current;
        onSelect(property.id);
     }
-  }), [isConnectMode]); // Only recreate if mode changes (dragging capability changes)
+  }), [isConnectMode]);
 
   return (
     <Marker
       ref={markerRef}
       position={[property.location.lat, property.location.lng]}
       icon={icon}
-      draggable={!isConnectMode} // Disable drag in connect mode
-      autoPan={!isConnectMode} // Disable auto pan in connect mode
+      draggable={!isConnectMode}
+      autoPan={!isConnectMode}
       eventHandlers={eventHandlers}
       zIndexOffset={(isSelected || isConnectStart) ? 1000 : 0}
     />
@@ -383,59 +405,29 @@ const MapInteractionHandler: React.FC<{
 
   useEffect(() => {
     const container = map.getContainer();
-    
-    // Custom Cursors (SVG Data URIs)
-    // 1. Red Push Pin for 'add_life_pin'
     const pinCursor = `url('data:image/svg+xml;utf8,<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.4))"><path d="M16 2C11.5 2 8 6.5 8 11C8 16 16 28 16 28C16 28 24 16 24 11C24 6.5 20.5 2 16 2Z" fill="%23C0392B" stroke="white" stroke-width="2"/><circle cx="16" cy="11" r="3.5" fill="white" fill-opacity="0.5"/></svg>') 16 28, auto`;
-
-    // 2. Yellow Pencil for 'pencil'
     const pencilCursor = `url('data:image/svg+xml;utf8,<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.4))"><path d="M22 4L28 10L10 28L2 30L4 22L22 4Z" fill="%23F5A623" stroke="white" stroke-width="2"/><path d="M2 30L4 22L10 28L2 30Z" fill="%232A2A2A"/></svg>') 2 30, auto`;
-
-    // 3. Green Property Pin for 'add_pin'
     const propertyCursor = `url('data:image/svg+xml;utf8,<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.4))"><path d="M16 2C11.5 2 8 6.5 8 11C8 16 16 28 16 28C16 28 24 16 24 11C24 6.5 20.5 2 16 2Z" fill="%232C5F2D" stroke="white" stroke-width="2"/><circle cx="16" cy="11" r="3.5" fill="white" fill-opacity="0.5"/></svg>') 16 28, auto`;
-
-    // 4. Eraser for 'eraser'
     const eraserCursor = `url('data:image/svg+xml;utf8,<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.4))"><path d="M24 6L28 10L14 24L10 20L24 6Z" fill="%23F0F0F0" stroke="white" stroke-width="2"/><path d="M14 24L10 20L6 24L10 28L14 24Z" fill="%23E65555" stroke="white" stroke-width="2"/></svg>') 10 28, auto`;
-
-    // 5. Ruler for 'connect-line'
-    // Matches the app's secondary color #97764E
-    // Icon: A small straight ruler segment.
     const connectCursor = `url('data:image/svg+xml;utf8,<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(1px 2px 2px rgba(0,0,0,0.25))"><path d="M1 27 L24 4 L28 8 L5 31 Z" fill="%2397764E" stroke="white" stroke-width="1.5" stroke-linejoin="round"/><path d="M5 23 L7 25 M9 19 L10 20 M13 15 L15 17 M17 11 L18 12 M21 7 L23 9" stroke="white" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/></svg>') 1 27, auto`;
 
-    // 1. Centralized Cursor Logic
     switch (mode) {
-      case 'add_pin':
-        container.style.cursor = propertyCursor;
-        break;
-      case 'add_life_pin':
-        container.style.cursor = pinCursor;
-        break;
-      case 'pencil':
-        container.style.cursor = pencilCursor;
-        break;
-      case 'connect-line':
-        container.style.cursor = connectCursor;
-        break;
-      case 'eraser':
-        container.style.cursor = eraserCursor;
-        break;
-      default:
-        container.style.cursor = 'grab';
-        break;
+      case 'add_pin': container.style.cursor = propertyCursor; break;
+      case 'add_life_pin': container.style.cursor = pinCursor; break;
+      case 'pencil': container.style.cursor = pencilCursor; break;
+      case 'connect-line': container.style.cursor = connectCursor; break;
+      case 'eraser': container.style.cursor = eraserCursor; break;
+      default: container.style.cursor = 'grab'; break;
     }
 
-    // 2. Click Handler
     const handleClick = (e: L.LeafletMouseEvent) => {
-      // Only intervene and stop propagation for "Add" modes
       if (mode === 'add_pin' || mode === 'add_life_pin') {
         L.DomEvent.stopPropagation(e.originalEvent);
         L.DomEvent.preventDefault(e.originalEvent);
         onMapClick(e.latlng.lat, e.latlng.lng);
       } else if (mode === 'connect-line') {
-        // Also capture clicks in connect-line mode for empty space logic
         onMapClick(e.latlng.lat, e.latlng.lng);
       } else {
-        // For browse mode, we pass through but can also detect clicks for closing UI elements
         onMapClick(e.latlng.lat, e.latlng.lng);
       }
     };
@@ -467,11 +459,9 @@ const MapFlyTo: React.FC<{ coords: { lat: number; lng: number } | null; disabled
   return null;
 };
 
-// --- User Location Marker with Auto FlyTo ---
+// --- User Location Marker ---
 const UserLocationMarker: React.FC<{ location: { lat: number, lng: number, accuracy: number } | null }> = ({ location }) => {
   const map = useMap();
-  
-  // Handle FlyTo side-effect when location is first found or updated manually
   useEffect(() => {
     if (location) {
       map.flyTo([location.lat, location.lng], 15, { duration: 1.5 });
@@ -492,18 +482,8 @@ const UserLocationMarker: React.FC<{ location: { lat: number, lng: number, accur
 
   return (
     <>
-       <Circle 
-         center={[location.lat, location.lng]} 
-         radius={location.accuracy} 
-         pathOptions={{ color: '#4A90E2', fillColor: '#4A90E2', fillOpacity: 0.1, weight: 1 }} 
-         interactive={false}
-       />
-       <Marker 
-         position={[location.lat, location.lng]} 
-         icon={userIcon} 
-         interactive={false}
-         zIndexOffset={1000}
-       />
+       <Circle center={[location.lat, location.lng]} radius={location.accuracy} pathOptions={{ color: '#4A90E2', fillColor: '#4A90E2', fillOpacity: 0.1, weight: 1 }} interactive={false} />
+       <Marker position={[location.lat, location.lng]} icon={userIcon} interactive={false} zIndexOffset={1000} />
     </>
   );
 };
@@ -526,7 +506,7 @@ const ToolButton: React.FC<{
   icon: React.ElementType;
   title?: string;
   activeColorClass?: string;
-  children?: React.ReactNode; // For nested elements like the color indicator
+  children?: React.ReactNode; 
 }> = ({ active, onClick, icon: Icon, title, activeColorClass = 'bg-[#2C5F2D]/10 text-[#2C5F2D]', children }) => (
   <button 
     onClick={onClick} 
@@ -553,13 +533,13 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
   const [pencilColor, setPencilColor] = useState<PencilColor>('#50B748');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
+  const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   
   // --- New State for Pin Naming Modal ---
   const [showPinNameModal, setShowPinNameModal] = useState(false);
   const [tempLifePinCoords, setTempLifePinCoords] = useState<{lat: number, lng: number} | null>(null);
 
   // --- New State for Connect Mode ---
-  // Tracks the first clicked node (start point)
   const [connectStartNode, setConnectStartNode] = useState<{ id: string, type: 'property' | 'pin', lat: number, lng: number } | null>(null);
   const [mouseLatLng, setMouseLatLng] = useState<{lat: number, lng: number} | null>(null);
 
@@ -572,7 +552,9 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
   // --- New State for Geolocation ---
   const [userLocation, setUserLocation] = useState<{ lat: number, lng: number, accuracy: number } | null>(null);
   const [isLocating, setIsLocating] = useState(false);
-  const [locationError, setLocationError] = useState<string | null>(null);
+  
+  // --- Notification System ---
+  const [notification, setNotification] = useState<{ type: 'error' | 'success' | 'info', message: string } | null>(null);
 
   // --- New State for Auto-Hiding Toolbar ---
   const [isToolbarOpen, setIsToolbarOpen] = useState(false);
@@ -595,9 +577,7 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     try {
       const savedPaths = localStorage.getItem('hb_notes_paths');
       return savedPaths ? JSON.parse(savedPaths) : [];
-    } catch (e) {
-      return [];
-    }
+    } catch (e) { return []; }
   });
 
   // Lazy init Media Stickers
@@ -605,9 +585,7 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     try {
       const savedStickers = localStorage.getItem('hb_notes_stickers');
       return savedStickers ? JSON.parse(savedStickers) : [];
-    } catch (e) {
-      return [];
-    }
+    } catch (e) { return []; }
   });
 
   // --- Life Circle State ---
@@ -649,23 +627,48 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     }
   }, [mode]);
 
+  // --- Helper: Show Toast ---
+  const showToast = (type: 'error' | 'success' | 'info', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
   // --- Persistence ---
   const savePaths = (newPaths: MapPath[]) => {
-    localStorage.setItem('hb_notes_paths', JSON.stringify(newPaths));
-    setPaths(newPaths);
+    try {
+      localStorage.setItem('hb_notes_paths', JSON.stringify(newPaths));
+      setPaths(newPaths);
+    } catch (e: any) {
+      if (e.name === 'QuotaExceededError') {
+        showToast('error', "存储空间不足，无法保存笔迹，请清理旧数据");
+      }
+    }
   };
 
   const saveStickers = (newStickers: MediaNote[]) => {
-    localStorage.setItem('hb_notes_stickers', JSON.stringify(newStickers));
-    setStickers(newStickers);
+    try {
+      localStorage.setItem('hb_notes_stickers', JSON.stringify(newStickers));
+      setStickers(newStickers);
+    } catch (e: any) {
+      if (e.name === 'QuotaExceededError') {
+         // Propagate error up if possible, or handle UI here
+         // Since we often call this from async fetch, we need to handle UI here
+         showToast('error', "存储空间不足，媒体文件无法保存。");
+         throw e; // Re-throw to stop subsequent logic if needed
+      }
+    }
   };
 
   useEffect(() => {
-    localStorage.setItem('hb_notes_life_pins', JSON.stringify(lifePins));
+    try {
+      localStorage.setItem('hb_notes_life_pins', JSON.stringify(lifePins));
+    } catch (e) {}
   }, [lifePins]);
 
   useEffect(() => {
-    localStorage.setItem('hb_notes_yarns', JSON.stringify(yarnConnections));
+    try {
+      localStorage.setItem('hb_notes_yarns', JSON.stringify(yarnConnections));
+    } catch (e) {}
   }, [yarnConnections]);
 
 
@@ -689,8 +692,13 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
           const reader = new FileReader();
           reader.onloadend = () => {
              const base64data = reader.result as string;
-             saveStickers([...stickers, { ...newSticker, url: base64data }]);
-             clearAudio(); // Reset hook state
+             try {
+                saveStickers([...stickers, { ...newSticker, url: base64data }]);
+                clearAudio(); 
+                showToast('success', '录音已添加');
+             } catch(e) {
+                // Handled in saveStickers
+             }
           };
           reader.readAsDataURL(blob);
         });
@@ -701,7 +709,7 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
       const center = getMapCenterRef.current();
       const newSticker: MediaNote = {
         id: Date.now().toString(),
-        type: 'image', 
+        type: 'video', // Correctly setting type to video now
         url: videoUrl, 
         position: center,
         rotation: (Math.random() * 10) - 5,
@@ -714,8 +722,14 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
           const reader = new FileReader();
           reader.onloadend = () => {
              const base64data = reader.result as string;
-             saveStickers([...stickers, { ...newSticker, url: base64data }]);
-             setShowVideoModal(false);
+             try {
+                 saveStickers([...stickers, { ...newSticker, url: base64data }]);
+                 setShowVideoModal(false);
+                 showToast('success', '视频笔记已添加');
+             } catch(e) {
+                 // Storage error handled in saveStickers
+                 console.error("Save failed", e);
+             }
           };
           reader.readAsDataURL(blob);
         });
@@ -753,19 +767,15 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
   // --- Geolocation Handler ---
   const handleLocateMe = () => {
     setIsLocating(true);
-    setLocationError(null);
     
     if (!navigator.geolocation) {
-       setLocationError("您的浏览器不支持地理定位");
+       showToast('error', "您的浏览器不支持地理定位");
        setIsLocating(false);
-       // Auto-dismiss
-       setTimeout(() => setLocationError(null), 3000);
        return;
     }
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        // Creates a new object reference to trigger useEffect inside UserLocationMarker
         setUserLocation({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
@@ -774,17 +784,13 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         setIsLocating(false);
       },
       (err) => {
-        console.error(err);
         let msg = "无法获取位置";
-        if (err.code === 1) msg = "请允许访问位置权限"; // PERMISSION_DENIED
-        else if (err.code === 2) msg = "位置获取失败"; // POSITION_UNAVAILABLE
-        else if (err.code === 3) msg = "定位超时"; // TIMEOUT
+        if (err.code === 1) msg = "请允许访问位置权限"; 
+        else if (err.code === 2) msg = "位置获取失败"; 
+        else if (err.code === 3) msg = "定位超时"; 
         
-        setLocationError(msg);
+        showToast('error', msg);
         setIsLocating(false);
-        
-        // Auto-dismiss error after 3s
-        setTimeout(() => setLocationError(null), 3000);
       },
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
     );
@@ -792,7 +798,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
 
   // --- Map Interactions (Pins & Life Pins) ---
   const handleMapClick = useCallback((lat: number, lng: number) => {
-    // Close toolbar on map interaction
     setIsToolbarOpen(false);
 
     if (mode === 'add_pin') {
@@ -801,7 +806,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
       setTempLifePinCoords({ lat, lng });
       setShowPinNameModal(true);
     } else if (mode === 'connect-line') {
-      // Logic for canceling selection or exiting mode
       if (connectStartNode) {
         setConnectStartNode(null);
       } else {
@@ -849,17 +853,12 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     setMode('browse');
   };
 
-  // --- Optimized Mouse Move Handler ---
-  // Only update state when strictly necessary (e.g., connect-line ghost)
-  // to avoid re-rendering the whole map (which kills drag events).
   const handleMouseMove = useCallback((lat: number, lng: number) => {
      if (mode === 'connect-line') {
         setMouseLatLng({lat, lng});
      }
   }, [mode]);
 
-  // --- Dragging Handlers for Real-time Yarn Updates ---
-  // Memoize these to prevent re-renders of child components
   const handleMarkerDrag = useCallback((id: string, lat: number, lng: number) => {
       setDraggingLocation({ id, lat, lng });
   }, []);
@@ -868,26 +867,18 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
       setDraggingLocation(null);
   }, []);
 
-  // --- Updated Connection Logic (Explicit Tool) ---
-  // WRAPPED in useCallback to be a stable dependency
   const handleNodeClick = useCallback((id: string, type: 'property' | 'pin', lat: number, lng: number) => {
     if (mode === 'eraser') {
-      // Eraser Mode: Trigger delete confirmation instead of window.confirm
       setDeleteTarget({ id, type });
       return;
     }
 
     if (mode === 'connect-line') {
-      // Step 1: Select Start Node
       if (!connectStartNode) {
         setConnectStartNode({ id, type, lat, lng });
         return;
       }
-
-      // Step 2: Select End Node & Validate
-      // Must be one property and one pin
       if (connectStartNode.id === id) {
-         // Clicked same node, cancel selection
          setConnectStartNode(null);
          return;
       }
@@ -900,12 +891,11 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
          propId = id;
          pinId = connectStartNode.id;
       } else {
-         alert("请连接【房源】与【生活圈图钉】。");
-         setConnectStartNode(null); // Reset to allow retry
+         showToast('info', "请连接【房源】与【生活圈图钉】");
+         setConnectStartNode(null); 
          return;
       }
 
-      // Toggle Connection
       const existing = yarnConnections.find(y => y.propertyId === propId && y.pinId === pinId);
       if (existing) {
         setYarnConnections(prev => prev.filter(y => y.id !== existing.id));
@@ -918,22 +908,15 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         setYarnConnections(prev => [...prev, newYarn]);
       }
       
-      // Reset start node so user can make another connection immediately
       setConnectStartNode(null);
       return;
     }
 
-    // Default Browser Mode Behavior
     if (type === 'property') {
        onPropertySelect(id);
     }
-    // Pins don't have a default click action in browse mode other than maybe centering
   }, [mode, connectStartNode, yarnConnections, onPropertySelect]);
 
-  // --- Wrapper Callbacks for Markers (Stable Refs) ---
-  // These wrappers lookup the coordinates dynamically so we don't need to pass
-  // an inline arrow function `(id) => handleNodeClick(id, ..., lat, lng)` in the render loop.
-  // This preserves React.memo on PropertyMarker.
   const handlePropertyMarkerSelect = useCallback((id: string) => {
      const p = properties.find(prop => prop.id === id);
      if(p) handleNodeClick(id, 'property', p.location.lat, p.location.lng);
@@ -944,7 +927,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
      if(p) handleNodeClick(id, 'pin', p.location.lat, p.location.lng);
   }, [lifePins, handleNodeClick]);
 
-  // --- NEW: Handle Pin Rename ---
   const handlePinRename = (id: string, newName: string) => {
     setLifePins(prev => prev.map(p => p.id === id ? { ...p, name: newName } : p));
   };
@@ -957,7 +939,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     return `${m}:${s}`;
   };
 
-  // --- UNDO Logic ---
   const handleUndo = () => {
     const lastPath = paths[paths.length - 1];
     const lastSticker = stickers[stickers.length - 1];
@@ -973,7 +954,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     }
   };
 
-  // --- Final Delete Confirmation Logic ---
   const handleConfirmDelete = () => {
     if (!deleteTarget) return;
 
@@ -987,7 +967,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
     setDeleteTarget(null);
   };
 
-  // Request Delete handler passed to PropertyMarker
   const handleRequestDeleteProperty = useCallback((id: string) => {
     setDeleteTarget({ id, type: 'property' });
   }, []);
@@ -1006,24 +985,30 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         onCancel={() => setDeleteTarget(null)}
       />
 
+      {/* NEW: Video Player Modal */}
+      <VideoPlayerModal 
+        videoUrl={playingVideoUrl}
+        onClose={() => setPlayingVideoUrl(null)}
+      />
+
       <MapContainer
         center={MAP_DEFAULT_CENTER}
         zoom={MAP_ZOOM}
         style={{ height: '100%', width: '100%', outline: 'none', background: 'transparent' }}
         zoomControl={false}
       >
+        <MapInvalidator />
+        
         <TileLayer
           attribution='&copy; OSM'
           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         />
 
-        {/* --- Layers --- */}
-        {/* Yarn Overlay: Placed early to be below markers but above tiles */}
         <YarnOverlay 
            properties={properties} 
            pins={lifePins} 
            connections={yarnConnections} 
-           draggingLocation={draggingLocation} // PASS DRAG STATE
+           draggingLocation={draggingLocation} 
            onDeleteConnection={handleDeleteConnection}
         />
 
@@ -1036,13 +1021,9 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
            onMouseMove={handleMouseMove}
         />
         
-        {/* Only fly to location if NOT in connect mode to avoid disorientation */}
         <MapFlyTo coords={selectedProp ? selectedProp.location : null} disabled={mode === 'connect-line'} />
-
-        {/* User Location Layer */}
         <UserLocationMarker location={userLocation} />
 
-        {/* Ghost Line (Connection Preview) */}
         {mode === 'connect-line' && connectStartNode && mouseLatLng && (
            <Polyline 
              positions={[
@@ -1053,10 +1034,12 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
            />
         )}
 
+        {/* Enhanced Media Layer with Video Playback */}
         <MediaNoteLayer 
           notes={stickers} 
           onDeleteNote={deleteSticker}
           onUpdateNotePosition={updateStickerPosition}
+          onPlayVideo={setPlayingVideoUrl}
         />
 
         {paths.map(path => {
@@ -1084,14 +1067,12 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
           );
         })}
 
-        {/* Life Pins */}
         {lifePins.map(pin => (
           <LifePinMarker 
             key={pin.id} 
             pin={pin} 
-            onDelete={(id) => setDeleteTarget({ id, type: 'pin' })} // Request delete modal
-            onRename={handlePinRename} // Pass the new handler
-            // Pass the stable wrapper instead of inline arrow func
+            onDelete={(id) => setDeleteTarget({ id, type: 'pin' })} 
+            onRename={handlePinRename} 
             onClick={handlePinMarkerSelect}
             isConnected={yarnConnections.some(y => y.pinId === pin.id)}
           />
@@ -1104,12 +1085,11 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
             isSelected={prop.id === selectedId}
             isConnectMode={mode === 'connect-line'}
             isConnectStart={connectStartNode?.id === prop.id}
-            // Pass the stable wrapper instead of inline arrow func
             onSelect={handlePropertyMarkerSelect}
             onUpdate={onUpdateProperty}
-            onRequestDelete={handleRequestDeleteProperty} // Request modal
-            onDrag={handleMarkerDrag}      // Stable callback
-            onDragEnd={handleMarkerDragEnd} // Stable callback
+            onRequestDelete={handleRequestDeleteProperty} 
+            onDrag={handleMarkerDrag}      
+            onDragEnd={handleMarkerDragEnd} 
             hasYarn={yarnConnections.some(y => y.propertyId === prop.id)}
           />
         ))}
@@ -1123,7 +1103,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         )}
       </MapContainer>
       
-      {/* ... Rest of UI ... */}
       <VideoRecorderModal 
         isOpen={showVideoModal}
         onClose={() => setShowVideoModal(false)}
@@ -1136,15 +1115,21 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         onConfirm={handleConfirmPinName}
       />
 
-      {/* 
-        NOTIFICATIONS & CONFIRMATIONS AREA 
-      */}
+      {/* NOTIFICATIONS & CONFIRMATIONS AREA */}
       <div className="absolute bottom-32 left-1/2 -translate-x-1/2 z-[400] flex flex-col gap-3 items-center w-full px-4 pointer-events-none">
         
-        {/* Error Toast for Location */}
-        {locationError && (
-           <div className="bg-red-500 text-white px-4 py-2 rounded-full text-xs font-sans-cn shadow-lg opacity-90 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-2 pointer-events-auto">
-             <AlertCircle size={14} /> {locationError}
+        {/* Global Notification Toast */}
+        {notification && (
+           <div className={`
+              px-4 py-2.5 rounded-full text-xs font-bold font-sans-cn shadow-lg opacity-95 animate-in fade-in slide-in-from-bottom-2 flex items-center gap-2 pointer-events-auto
+              ${notification.type === 'error' ? 'bg-red-500 text-white' : ''}
+              ${notification.type === 'success' ? 'bg-[#2C5F2D] text-white' : ''}
+              ${notification.type === 'info' ? 'bg-[#97764E] text-white' : ''}
+           `}>
+             {notification.type === 'error' && <AlertCircle size={14} />}
+             {notification.type === 'success' && <Check size={14} />}
+             {notification.type === 'info' && <Bell size={14} />}
+             {notification.message}
            </div>
         )}
 
@@ -1169,7 +1154,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
            </div>
         )}
         
-        {/* Audio Recording Toast */}
         {isAudioRecording && (
            <div className="bg-red-500 text-white px-4 py-2 rounded-full text-sm font-sans-cn shadow-lg opacity-90 animate-pulse flex items-center gap-2 pointer-events-auto">
               <div className="w-2 h-2 bg-white rounded-full"></div>
@@ -1178,7 +1162,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
            </div>
         )}
 
-        {/* New Pin Confirmation */}
         {newPinCoords && (
           <div className="pointer-events-auto flex gap-2 animate-in slide-in-from-bottom-4">
              <button
@@ -1198,15 +1181,14 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         )}
       </div>
 
-      {/* 
-        INDEPENDENT LOCATE BUTTON (TOP LEFT)
-      */}
       {!newPinCoords && (
         <div className="absolute left-4 top-24 md:top-6 z-[400] pointer-events-none">
             <button 
               onClick={handleLocateMe}
               className={`
-                pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-full shadow-xl transition-all duration-300 ease-out border
+                pointer-events-auto flex items-center justify-center 
+                w-10 h-10 md:w-auto md:h-auto md:px-5 md:py-3 md:gap-2 
+                rounded-full shadow-xl transition-all duration-300 ease-out border
                 ${isLocating 
                    ? 'bg-white text-[#4A90E2] border-[#4A90E2]/20 cursor-wait' 
                    : 'bg-white/95 text-[#2C5F2D] border-white/50 hover:bg-[#2C5F2D] hover:text-white hover:border-[#2C5F2D] hover:scale-105 active:scale-95'
@@ -1216,22 +1198,17 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
               disabled={isLocating}
             >
               {isLocating ? (
-                <Loader2 size={18} className="animate-spin" />
+                <Loader2 size={20} className="animate-spin md:w-[18px] md:h-[18px]" />
               ) : (
-                <Locate size={18} strokeWidth={2.5} />
+                <Locate size={20} strokeWidth={2.5} className="md:w-[18px] md:h-[18px]" />
               )}
-              <span className="font-bold text-sm tracking-wide font-sans-cn">
+              <span className="hidden md:block font-bold text-sm tracking-wide font-sans-cn">
                  {isLocating ? '定位中...' : '我的位置'}
               </span>
             </button>
         </div>
       )}
 
-      {/* 
-        MAIN TOOLBAR - AUTO-HIDING IMMERSIVE MODE 
-      */}
-      
-      {/* 1. Desktop Hot Zone (Hover trigger) */}
       {isDesktop && !newPinCoords && (
         <div 
            className="fixed top-0 left-0 w-6 h-full z-[399]"
@@ -1239,7 +1216,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
         />
       )}
 
-      {/* 2. Toolbar Container (Sliding) */}
       {!newPinCoords && (
         <div 
            className={`
@@ -1248,10 +1224,8 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
            `}
            onMouseLeave={() => isDesktop && setIsToolbarOpen(false)}
         >
-           {/* The Glass Pill Content */}
            <div className="pointer-events-auto bg-[#F7F5F0]/85 backdrop-blur-xl border border-white/50 p-1.5 rounded-full shadow-2xl shadow-black/5 flex flex-col items-center gap-1.5 relative">
               
-              {/* Group 1: Browse */}
               <ToolButton 
                 active={mode === 'browse'} 
                 onClick={() => setMode('browse')}
@@ -1261,21 +1235,30 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
               
               <ToolbarDivider />
               
-              {/* Group 2: Create */}
               <div className="flex flex-col gap-1.5">
                 <ToolButton 
                   active={mode === 'add_pin'} 
                   onClick={() => setMode(mode === 'add_pin' ? 'browse' : 'add_pin')}
                   icon={MapPin}
                   title="添加房源"
-                />
+                >
+                  <div className="absolute top-1 right-1 w-3 h-3 bg-[#2C5F2D] rounded-full text-white flex items-center justify-center shadow-sm border border-white">
+                    <Plus size={8} strokeWidth={4} />
+                  </div>
+                </ToolButton>
+
                 <ToolButton 
                   active={mode === 'add_life_pin'}
                   activeColorClass="bg-[#C0392B]/10 text-[#C0392B] ring-[#C0392B]/20" 
                   onClick={() => setMode(mode === 'add_life_pin' ? 'browse' : 'add_life_pin')}
                   icon={Pin}
                   title="添加生活圈图钉"
-                />
+                >
+                  <div className="absolute top-1 right-1 w-3 h-3 bg-[#C0392B] rounded-full text-white flex items-center justify-center shadow-sm border border-white">
+                    <Plus size={8} strokeWidth={4} />
+                  </div>
+                </ToolButton>
+
                 <ToolButton 
                   active={mode === 'connect-line'}
                   activeColorClass="bg-[#97764E]/10 text-[#97764E] ring-[#97764E]/20" 
@@ -1287,9 +1270,7 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
 
               <ToolbarDivider />
               
-              {/* Group 3: Edit (Pencil & Eraser) */}
               <div className="flex flex-col gap-1.5">
-                 {/* Color Picker / Pencil */}
                  <div className="relative">
                      {showColorPicker && (
                         <div className="absolute left-full ml-4 top-1/2 -translate-y-1/2 bg-white/90 backdrop-blur-md border border-[#E5E0D8] p-2 rounded-full shadow-xl flex gap-2 animate-in slide-in-from-left-2 fade-in duration-200 z-[500]">
@@ -1320,7 +1301,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
               
               <ToolbarDivider />
               
-              {/* Group 4: Media */}
               <div className="flex flex-col gap-1.5">
                  <ToolButton 
                     onClick={() => setShowVideoModal(true)}
@@ -1338,7 +1318,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
                  </ToolButton>
               </div>
 
-              {/* Undo Group */}
               {(paths.length > 0 || stickers.length > 0) && (
                 <>
                 <ToolbarDivider />
@@ -1351,10 +1330,6 @@ export const MapBoard: React.FC<MapBoardProps> = ({ properties, onPropertySelect
               )}
            </div>
 
-           {/* 
-              3. Mobile Handle (Visible when closed)
-              Attached to the container but sticking out to the right
-           */}
            <button
               onClick={() => setIsToolbarOpen(!isToolbarOpen)}
               className={`

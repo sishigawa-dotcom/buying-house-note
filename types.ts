@@ -23,7 +23,7 @@ export interface NoteMedia {
 // --- Sticker Note Types ---
 export interface MediaNote {
   id: string;
-  type: 'image' | 'audio';
+  type: 'image' | 'audio' | 'video';
   url: string; // Base64 Data URL for persistence
   position: GeoLocation;
   rotation: number; // Random rotation -5 to 5 deg
@@ -53,6 +53,7 @@ export interface Property {
   pros: string[];
   cons: string[];
   // New Fields
+  category?: string; // User defined category (e.g., "Default", "Favorites")
   floorPlans?: FloorPlan[];
   discountPolicy?: string; // New: 优惠政策
   discountDeadline?: string; // New: 优惠时间

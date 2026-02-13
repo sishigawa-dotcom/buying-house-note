@@ -9,28 +9,28 @@ interface MediaNoteLayerProps {
   notes: MediaNote[];
   onDeleteNote: (id: string) => void;
   onUpdateNotePosition: (id: string, lat: number, lng: number) => void;
+  onPlayVideo: (url: string) => void;
 }
 
 // --- ReactMarker Helper Component ---
-// Leaflet markers usually take an HTML string for divIcon.
-// To render a fully interactive React component (Audio player state, hover effects),
-// we need to mount a React Root into the element created by Leaflet.
 const ReactMarker: React.FC<{
   note: MediaNote;
   onDelete: () => void;
   onDragEnd: (lat: number, lng: number) => void;
-}> = ({ note, onDelete, onDragEnd }) => {
+  onPlay: (url: string) => void;
+}> = ({ note, onDelete, onDragEnd, onPlay }) => {
   const markerRef = useRef<L.Marker>(null);
   const rootRef = useRef<any>(null); // React Root
   const containerRef = useRef<HTMLDivElement>(document.createElement('div'));
 
-  // Create the Leaflet Icon once. 
-  // We use a clean div with no padding/border as the container.
+  // Video notes are smaller, square-ish. Others are rectangular.
+  const size = note.type === 'video' ? [100, 100] : [120, 120];
+
   const icon = L.divIcon({
-    className: 'sticker-marker-container', // We will add global styles for z-index
+    className: 'sticker-marker-container',
     html: containerRef.current,
-    iconSize: [120, 120], // Matches the sticker size
-    iconAnchor: [60, 60], // Center anchor
+    iconSize: size as [number, number],
+    iconAnchor: [size[0]/2, size[1]/2],
   });
 
   // Effect: Render React Content into the container
@@ -40,9 +40,9 @@ const ReactMarker: React.FC<{
     }
     
     rootRef.current.render(
-      <StickerNote note={note} onDelete={onDelete} />
+      <StickerNote note={note} onDelete={onDelete} onPlay={onPlay} />
     );
-  }, [note, onDelete]); // Re-render if note changes
+  }, [note, onDelete, onPlay]); // Re-render if note changes
 
   // Cleanup
   useEffect(() => {
@@ -62,16 +62,10 @@ const ReactMarker: React.FC<{
         onDragEnd(lat, lng);
       }
     },
-    // Lift effect on drag start
     dragstart: () => {
        if (containerRef.current) {
-         // We can manipulate the DOM directly for immediate feedback if needed, 
-         // but CSS classes in StickerNote handle most of it.
          containerRef.current.style.zIndex = '1000';
        }
-    },
-    drag: () => {
-       // Optional: Add shadow changes here
     }
   };
 
@@ -87,7 +81,7 @@ const ReactMarker: React.FC<{
   );
 };
 
-export const MediaNoteLayer: React.FC<MediaNoteLayerProps> = ({ notes, onDeleteNote, onUpdateNotePosition }) => {
+export const MediaNoteLayer: React.FC<MediaNoteLayerProps> = ({ notes, onDeleteNote, onUpdateNotePosition, onPlayVideo }) => {
   return (
     <>
       {notes.map(note => (
@@ -96,6 +90,7 @@ export const MediaNoteLayer: React.FC<MediaNoteLayerProps> = ({ notes, onDeleteN
           note={note} 
           onDelete={() => onDeleteNote(note.id)}
           onDragEnd={(lat, lng) => onUpdateNotePosition(note.id, lat, lng)}
+          onPlay={onPlayVideo}
         />
       ))}
     </>
