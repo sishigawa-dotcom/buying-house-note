@@ -1,0 +1,7 @@
+{
+  "name": "部署 买房人笔记0.3.6",
+  "description": "一款拥有纸质纹理质感的垂直森林风格购房决策工具，帮助用户通过地图、富文本笔记和AI分析来组织看房行程。",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
